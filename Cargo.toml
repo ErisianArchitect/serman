@@ -1,7 +1,7 @@
 
 [package]
 name = "serman"
-description = "A library for handling process restarts on unix systems."
+description = "A low-level library for handling process restarts on unix systems."
 authors = ["Ada F. <https://github.com/ErisianArchitect>"]
 version = "0.1.0"
 edition = "2024"

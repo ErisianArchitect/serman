@@ -49,6 +49,8 @@ impl Errno {
 pub enum FileDescriptorError {
     #[error("File descriptor is already in use.")]
     AlreadyUsed,
+    #[error("File Descriptor is either invalid or closed.")]
+    InvalidOrClosed,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -84,7 +86,7 @@ impl FileDescriptor {
     #[inline(always)]
     pub fn new(fd: c_int) -> Result<Self> {
         let result = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-        if result < 0 {
+        if result == -1 {
             return Errno::get_err();
         }
         Ok(Self {
@@ -94,7 +96,7 @@ impl FileDescriptor {
     
     pub fn close(&mut self) -> Result {
         let result = unsafe { libc::fcntl(self.fd, libc::F_GETFD) };
-        if result < 0 {
+        if result == -1 {
             return Ok(());
         }
         let close_result = unsafe { libc::close(self.fd) };
@@ -104,9 +106,21 @@ impl FileDescriptor {
         Ok(())
     }
 
-    pub fn dup2(&mut self, fd: c_int) -> Result<Self> {
-        let result = unsafe { libc::fcntl(self.fd, libc::F_GETFD) };
+    pub fn dup(&self) -> Result<Self> {
+        let result = unsafe { libc::dup(self.fd) };
         if result < 0 {
+            return Errno::get_err();
+        }
+        Ok(Self { fd: result })
+    }
+
+    pub fn dup2(&self, fd: c_int) -> Result<Self> {
+        let result = unsafe { libc::fcntl(self.fd, libc::F_GETFD) };
+        if result == -1 {
+            return Err(Error::FileDescriptorError(FileDescriptorError::InvalidOrClosed));
+        }
+        let result = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if result != -1 {
             return Err(Error::FileDescriptorError(FileDescriptorError::AlreadyUsed));
         }
         let result = unsafe { libc::dup2(self.fd, fd) };
@@ -124,23 +138,38 @@ impl FileDescriptor {
 }
 
 #[repr(C)]
-struct Reader {
+pub struct Reader {
     fd: FileDescriptor,
 }
 
 #[repr(C)]
-struct Writer {
+pub struct Writer {
     fd: FileDescriptor,
 }
 
-pub fn pipe() -> Result<(Reader, Writer)> {
+impl Reader {
+    
+}
+
+pub fn pipe(read_fd: Option<c_int>, write_fd: Option<c_int>) -> Result<(Reader, Writer)> {
     let mut fds: [c_int; 2] = [0; 2];
     let result = unsafe { libc::pipe(fds.as_mut_ptr()) };
     if result < 0 {
         return Errno::get_err();
     }
+    let mut reader_fd = FileDescriptor { fd: fds[0] };
+    let mut writer_fd = FileDescriptor { fd: fds[1] };
+
+    if let Some(read_fd) = read_fd {
+        reader_fd.rebind(read_fd)?;
+    }
+
+    if let Some(write_fd) = write_fd {
+        writer_fd.rebind(write_fd)?;
+    }
+    
     Ok((
-        Reader { fd: FileDescriptor { fd: fds[0] } },
-        Writer { fd: FileDescriptor { fd: fds[1] } },
+        Reader { fd: reader_fd },
+        Writer { fd: writer_fd },
     ))
 }

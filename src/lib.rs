@@ -15,12 +15,19 @@ pub enum Error {
 
 pub type Result<T = (), E = Error> = std::result::Result<T, E>;
 
+/// libc errno wrapper. See libc error values for more information.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, thiserror::Error)]
 #[error("Errno({0})")]
 pub struct Errno(c_int);
 
 impl Errno {
+    #[must_use]
+    #[inline(always)]
+    pub const fn new(value: c_int) -> Self {
+        Self(value)
+    }
+    
     #[must_use]
     #[inline(always)]
     pub fn get() -> Self {

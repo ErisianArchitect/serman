@@ -6,15 +6,6 @@ use libc::{
 #[cfg(not(unix))]
 compile_error!("This library is for unix systems, and the target is not a unix system.");
 
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("IO Error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-pub type Result<T = (), E = Error> = std::result::Result<T, E>;
-
 /// libc errno wrapper. See libc error values for more information.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, thiserror::Error)]
@@ -42,16 +33,76 @@ impl Errno {
     pub fn value(self) -> c_int {
         self.0
     }
+
+    #[inline(always)]
+    fn err<T>(self) -> Result<T> {
+        Err(Error::Errno(self))
+    }
+
+    #[inline(always)]
+    fn get_err<T>() -> Result<T> {
+        Errno::get().err()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("IO Error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("libc Error: {0}")]
+    Errno(#[from] Errno),
+}
+
+pub type Result<T = (), E = Error> = std::result::Result<T, E>;
+
+struct FileDescriptor {
+    fd: c_int,
+}
+
+impl Drop for FileDescriptor {
+    fn drop(&mut self) {
+        match self.close() {
+            Ok(()) => {},
+            Err(err) => eprintln!("FileDescriptor Drop failed: {err}"),
+        }
+    }
+}
+
+impl FileDescriptor {
+    /// Creates a new [FileDescriptor] from its raw value.
+    /// 
+    /// File descriptor must be both open and valid.
+    #[must_use]
+    #[inline(always)]
+    pub fn new(fd: c_int) -> Result<Self> {
+        let result = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if result < 0 {
+            return Errno::get_err();
+        }
+        Ok(Self {
+            fd,
+        })
+    }
+    
+    pub fn close(&mut self) -> Result {
+        let result = unsafe { libc::fcntl(self.fd, libc::F_GETFD) };
+        if result < 0 {
+            return Ok(());
+        }
+        let close_result = unsafe { libc::close(self.fd) };
+        if close_result < 0 {
+            return Errno::get_err();
+        }
+        Ok(())
+    }
 }
 
 #[repr(C)]
 struct Reader {
-    fd: c_int,
-    open: bool,
+    fd: FileDescriptor,
 }
 
 #[repr(C)]
 struct Writer {
-    fd: c_int,
-    open: bool,
+    fd: FileDescriptor,
 }

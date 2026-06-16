@@ -106,3 +106,16 @@ struct Reader {
 struct Writer {
     fd: FileDescriptor,
 }
+
+pub fn pipe() -> Result<(Reader, Writer)> {
+    let mut fds: [c_int; 2] = [0; 2];
+    let result = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    if result < 0 {
+        return Errno::get_err();
+    }
+    Ok((
+        Reader { fd: FileDescriptor { fd: fds[0] } },
+        Writer { fd: FileDescriptor { fd: fds[1] } },
+    ))
+}
+

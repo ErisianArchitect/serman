@@ -46,11 +46,19 @@ impl Errno {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum FileDescriptorError {
+    #[error("File descriptor is already in use.")]
+    AlreadyUsed,
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("IO Error: {0}")]
     Io(#[from] std::io::Error),
     #[error("libc Error: {0}")]
     Errno(#[from] Errno),
+    #[error("File Descriptor Error: {0}")]
+    FileDescriptorError(#[from] FileDescriptorError),
 }
 
 pub type Result<T = (), E = Error> = std::result::Result<T, E>;
@@ -95,6 +103,24 @@ impl FileDescriptor {
         }
         Ok(())
     }
+
+    pub fn dup2(&mut self, fd: c_int) -> Result<Self> {
+        let result = unsafe { libc::fcntl(self.fd, libc::F_GETFD) };
+        if result < 0 {
+            return Err(Error::FileDescriptorError(FileDescriptorError::AlreadyUsed));
+        }
+        let result = unsafe { libc::dup2(self.fd, fd) };
+        if result < 0 {
+            return Errno::get_err();
+        }
+        Ok(Self { fd })
+    }
+
+    pub fn rebind(&mut self, fd: c_int) -> Result {
+        let new = self.dup2(fd)?;
+        *self = new;
+        Ok(())
+    }
 }
 
 #[repr(C)]
@@ -118,4 +144,3 @@ pub fn pipe() -> Result<(Reader, Writer)> {
         Writer { fd: FileDescriptor { fd: fds[1] } },
     ))
 }
-

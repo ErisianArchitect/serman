@@ -43,3 +43,15 @@ impl Errno {
         self.0
     }
 }
+
+#[repr(C)]
+struct Reader {
+    fd: c_int,
+    open: bool,
+}
+
+#[repr(C)]
+struct Writer {
+    fd: c_int,
+    open: bool,
+}

@@ -333,6 +333,10 @@ impl Reader {
         Ok(Self { fd })
     }
 
+    pub fn close(&mut self) -> Result<()> {
+        self.fd.close()
+    }
+
     #[inline(always)]
     fn ensure_open(&self) -> Result<()> {
         if !self.fd.is_open() {
@@ -377,6 +381,10 @@ impl Writer {
         Ok(Self { fd })
     }
 
+    pub fn close(&mut self) -> Result<()> {
+        self.fd.close()
+    }
+
     #[inline(always)]
     pub fn ensure_open(&self) -> Result<()> {
         if !self.fd.is_open() {
@@ -406,7 +414,7 @@ impl Writer {
             if write_len == 0 {
                 break;
             }
-            count += 1;
+            count += write_len;
         }
         Ok(count)
     }
@@ -477,8 +485,11 @@ mod tests {
 
     #[test]
     fn pipe_test() -> Result<()> {
-        let (mut reader, mut writer) = pipe(None, None)?;
+        let (mut reader, mut writer) = pipe(Some(420), Some(69))?;
 
+        assert_eq!(reader.fd.fd, 420);
+        assert_eq!(writer.fd.fd, 69);
+        
         let data = b"hello";
         
         assert_eq!(5, writer.write_all(data)?);
@@ -487,7 +498,13 @@ mod tests {
 
         assert_eq!(5, reader.read_exact(&mut buf)?);
 
+        writer.close()?;
+        
+        assert_eq!(0, reader.read_exact(&mut buf)?);
+        assert_eq!(0, reader.read_exact(&mut buf)?);
+
         assert_eq!(&buf, data);
+        
 
         println!("Just to make sure...");
 

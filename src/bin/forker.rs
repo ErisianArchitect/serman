@@ -5,9 +5,10 @@ use std::time::Duration;
 use serman::{Context};
 
 fn main() {
-    fn main(mut ctx: Context) -> serman::Result<()> {
+    fn main(ctx: Context) -> serman::Result<()> {
+        let ctx2 = ctx.clone();
         let pid = std::process::id();
-        match ctx.restart_count {
+        match ctx.restart_id() {
             0 => println!("First Run (pid: {pid})"),
             count @ 1..=4 => {
                 println!("Restart Run {count} (pid: {pid})")
@@ -18,7 +19,7 @@ fn main() {
             }
             _ => return Ok(()),
         }
-        ctx.restart()?;
+        ctx2.restart()?;
         Ok(())
     }
     unsafe {

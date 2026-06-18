@@ -1,5 +1,5 @@
 
-use std::time::SystemTime;
+use std::{sync::{Arc, Mutex}, time::SystemTime};
 
 use libc::{
     c_int,
@@ -583,26 +583,60 @@ enum ParentResult {
     Exit,
 }
 
+#[repr(C)]
+struct ContextInner {
+    sender: Mutex<MsgSend>,
+    restart_count: u64,
+    entry_time: SystemTime,
+}
+
+#[repr(transparent)]
+#[derive(Clone)]
 pub struct Context {
-    pub restart_count: u64,
-    pub entry_time: SystemTime,
-    pub sender: MsgSend,
+    inner: Arc<ContextInner>,
 }
 
 impl Context {
+    /// This is essentially the child index.
+    /// 
+    /// `0` would be the first, and all subsequent runs are numbered sequentially.
+    /// 
+    /// This can be considered to be the number of times that the process has been restarted.
+    #[must_use]
     #[inline(always)]
-    pub fn restart(&mut self) -> Result<bool> {
-        self.sender.restart()
+    pub fn restart_id(&self) -> u64 {
+        self.inner.restart_count
     }
 
+    /// The time that the entry function was initially called in the root process before any
+    /// child process has been forked.
+    #[must_use]
     #[inline(always)]
-    pub fn cancel(&mut self) -> Result<bool> {
-        self.sender.cancel()
+    pub fn entry_time(&self) -> SystemTime {
+        self.inner.entry_time
     }
 
+    /// Send a message to the supervisor process.
     #[inline(always)]
-    pub fn send(&mut self, msg: Message) -> Result<bool> {
-        self.sender.send(msg)
+    pub fn send(&self, msg: Message) -> Result<bool> {
+        let mut sender = self.inner.sender.lock().unwrap();
+        sender.send(msg)
+    }
+
+    /// Send a restart request to the supervisor process.
+    /// 
+    /// This will not cause the process to restart immediately, instead it will restart
+    /// on process exit. You can call [Context::cancel] to cancel the restart and proceed
+    /// to exit from the parent process.
+    #[inline(always)]
+    pub fn restart(&self) -> Result<bool> {
+        self.send(Message::Restart)
+    }
+
+    /// Cancel a previously sent restart request.
+    #[inline(always)]
+    pub fn cancel(&self) -> Result<bool> {
+        self.send(Message::Cancel)
     }
 }
 
@@ -624,7 +658,14 @@ pub unsafe fn entry<R>(main: fn(Context) -> Result<R>) -> EntryResult<R> {
                 return EntryResult::Child((move || {
                     reader.close()?;
                     let sender = MsgSend { writer };
-                    let main_result = main(Context { restart_count, entry_time, sender });
+                    let ctx = Context {
+                        inner: Arc::new(ContextInner {
+                            restart_count,
+                            entry_time,
+                            sender: Mutex::new(sender),
+                        })
+                    };
+                    let main_result = main(ctx);
                     main_result
                 })());
             }

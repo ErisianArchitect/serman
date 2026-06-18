@@ -1,3 +1,19 @@
+//  SPDX-License-Identifier: Apache-2.0
+//  Copyright © 2026-present Ada F. <https://github.com/ErisianArchitect>
+//  
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//  
+//      http://www.apache.org/licenses/LICENSE-2.0
+//  
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//:---[END-HEADER]---
+
 
 use std::{sync::{Arc, Mutex}, time::SystemTime};
 
@@ -592,11 +608,11 @@ struct ContextInner {
 
 #[repr(transparent)]
 #[derive(Clone)]
-pub struct Context {
+pub struct ForkContext {
     inner: Arc<ContextInner>,
 }
 
-impl Context {
+impl ForkContext {
     /// This is essentially the child index.
     /// 
     /// `0` would be the first, and all subsequent runs are numbered sequentially.
@@ -640,11 +656,11 @@ impl Context {
     }
 }
 
-pub unsafe fn entry<R>(main: fn(Context) -> Result<R>) -> EntryResult<R> {
+pub unsafe fn entry<R>(main: fn(ForkContext) -> Result<R>) -> EntryResult<R> {
     let entry_time = SystemTime::now();
     let mut restart_count = 0u64;
     'fork_loop: loop {
-        let (mut reader, mut writer) = match pipe(None, None) {
+        let (reader, writer) = match pipe(None, None) {
             Ok(pair) => pair,
             Err(err) => return EntryResult::Parent(Err(err)),
         };
@@ -656,23 +672,23 @@ pub unsafe fn entry<R>(main: fn(Context) -> Result<R>) -> EntryResult<R> {
             // child
             0 => {
                 return EntryResult::Child((move || {
-                    reader.close()?;
+                    drop(reader);
                     let sender = MsgSend { writer };
-                    let ctx = Context {
+                    let ctx = ForkContext {
                         inner: Arc::new(ContextInner {
                             restart_count,
                             entry_time,
                             sender: Mutex::new(sender),
                         })
                     };
-                    let main_result = main(ctx);
-                    main_result
+                    main(ctx)
                 })());
             }
             // parent
             pid => {
                 let result = (move || {
-                    writer.close()?;
+                    drop(writer);
+                    // TODO: Handle signals within the parent.
                     let mut receiver = MsgRecv { reader };
                     let mut exit_result = ParentResult::Exit;
                     'receive_loop: loop {
@@ -682,6 +698,7 @@ pub unsafe fn entry<R>(main: fn(Context) -> Result<R>) -> EntryResult<R> {
                             None => break 'receive_loop,
                         }
                     }
+                    // TODO: Catch status from waitpid to return exit code.
                     let wait_result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
                     if wait_result == -1 {
                         return Errno::get_err();

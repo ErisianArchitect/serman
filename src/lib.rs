@@ -515,11 +515,19 @@ pub fn pipe(read_fd: Option<c_int>, write_fd: Option<c_int>) -> Result<(Reader, 
 pub enum Message {
     Cancel = 0,
     Restart = 1,
+    StartData = 2,
+    EndData = 3,
+    ClearData = 4,
+    // TODO: If you add any more messages, make sure to update Message::MAX to the new maximum value.
 }
 
 impl Message {
     pub const CANCEL: u8 = Self::Cancel.as_u8();
     pub const RESTART: u8 = Self::Restart.as_u8();
+    pub const START_DATA: u8 = Self::StartData.as_u8();
+    pub const END_DATA: u8 = Self::EndData.as_u8();
+    pub const CLEAR_DATA: u8 = Self::ClearData.as_u8();
+    const MAX: u8 = Self::ClearData.as_u8();
 
     #[must_use]
     #[inline(always)]
@@ -529,11 +537,10 @@ impl Message {
 
     #[must_use]
     pub const fn from_u8(value: u8) -> Option<Message> {
-        match value {
-            Self::CANCEL => Some(Self::Cancel),
-            Self::RESTART => Some(Self::Restart),
-            _ => None,
+        if value > Self::MAX {
+            return None;
         }
+        Some(unsafe { ::core::mem::transmute(value) })
     }
 }
 
@@ -906,6 +913,11 @@ pub unsafe fn entry<R>(main: fn(ForkContext) -> R) -> EntryResult<R> {
                         match receiver.recv()? {
                             Some(Message::Cancel) => exit_result = ParentResult::Exit,
                             Some(Message::Restart) => exit_result = ParentResult::Restart,
+                            Some(Message::StartData) => {
+                                
+                            },
+                            Some(Message::EndData) => {},
+                            Some(Message::ClearData) => {},
                             None => break 'receive_loop,
                         }
                     }

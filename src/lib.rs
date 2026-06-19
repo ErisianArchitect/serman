@@ -14,6 +14,7 @@
 //  limitations under the License.
 //:---[END-HEADER]---
 
+mod entry;
 mod error;
 mod ffi;
 mod ref_count;

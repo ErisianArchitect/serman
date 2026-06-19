@@ -5,6 +5,7 @@ use libc::{
     __errno_location,
 };
 
+// SPDX-License-Identifier: Linux-man-pages-copyleft
 // Errors:
 //  * pipe:
 //      * EMFILE
@@ -61,12 +62,20 @@ use libc::{
 //      * Other errors may occur depending on the object connected to fd.
 //  * write:
 //      * EWOULDBLOCK
+//        The file descriptor fd refers to a socket and has been marked nonblocking, and the read would block.
 //      * EBADF
+//        fd is not a valid file descriptor or is not open for writing.
 //      * EDESTADDRREQ
+//        fd refers to a datagram socket for which a peer address has not been set using connect(2).
 //      * EDQUOT
+//        The user's quota of disk blocks on the filesystem containing the file referred to by fd has been exhausted.
 //      * EFAULT
+//        buf is outside your accessible address space.
 //      * EFBIG
+//        An attempt was made to write a file that exceeds the implementation-defined maximum file size or the process's file size limit, or  to
+//        write at a position past the maximum allowed offset.
 //      * EINTR
+//        The call was interrupted by a signal before any data was written; see signal(7).
 //      * EINVAL
 //      * EIO
 //      * ENOSPC

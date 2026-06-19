@@ -14,8 +14,18 @@
 //  limitations under the License.
 //:---[END-HEADER]---
 
+mod error;
+mod ffi;
+mod ref_count;
 
-use std::{sync::{Arc, Mutex}, time::SystemTime};
+use parking_lot::Mutex;
+use std::{time::SystemTime};
+use ::core::{
+    ptr::NonNull,
+    alloc::Layout,
+};
+
+use ref_count::RefCounter32;
 
 use libc::{
     c_int,
@@ -116,7 +126,7 @@ impl Error {
 macro_rules! fd_flags {
     (
         $(
-            $flag:ident = $value:expr
+            $vis:vis $flag:ident = $value:expr
         ),*
         $(,)?
     ) => {
@@ -126,17 +136,17 @@ macro_rules! fd_flags {
 
         impl FdFlags {
             $(
-                pub const $flag: Self = Self($value);
+                $vis const $flag: Self = Self($value);
             )*
         }
     };
 }
 
 fd_flags! {
-    R_ONLY = libc::O_RDONLY,
-    W_ONLY = libc::O_WRONLY,
-    RW = libc::O_RDWR,
-    ACCESS_MODE = libc::O_ACCMODE,
+    pub R_ONLY = libc::O_RDONLY,
+    pub W_ONLY = libc::O_WRONLY,
+    pub RW = libc::O_RDWR,
+    pub ACCESS_MODE = libc::O_ACCMODE,
 }
 
 impl FdFlags {
@@ -214,11 +224,15 @@ impl FdFlags {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AccessMode {
+    /// Access is read only.
     ReadOnly = 0,
+    /// Access is write only.
     WriteOnly = 1,
+    /// Access is read and write.
     ReadWrite = 2,
 }
 
+#[repr(transparent)]
 pub struct FileDescriptor {
     fd: c_int,
 }
@@ -239,16 +253,19 @@ impl FileDescriptor {
     #[must_use]
     #[inline(always)]
     pub fn from_fd(fd: c_int) -> Result<Self> {
+        Errno::filter_result(unsafe { libc::fcntl(fd, libc::F_GETFD) })?;
         Ok(Self {
-            fd: Errno::filter_result(unsafe { libc::fcntl(fd, libc::F_GETFD) })?,
+            fd,
         })
     }
 
+    /// Get the flags for this file descriptor.
     pub fn flags(&self) -> Result<FdFlags> {
         let flags = Errno::filter_result(unsafe { libc::fcntl(self.fd, libc::F_GETFL) })?;
         Ok(FdFlags(flags))
     }
 
+    /// Get the access mode for this file descriptor.
     pub fn access_mode(&self) -> Result<AccessMode> {
         let flags = self.flags()?;
         Ok(match flags.and(FdFlags::ACCESS_MODE) {
@@ -285,14 +302,7 @@ impl FileDescriptor {
     }
     
     pub fn close(&mut self) -> Result {
-        let result = unsafe { libc::fcntl(self.fd, libc::F_GETFD) };
-        if result == -1 {
-            return Ok(());
-        }
-        let close_result = unsafe { libc::close(self.fd) };
-        if close_result == -1 {
-            return Errno::get_err();
-        }
+        Errno::filter_result(unsafe { libc::close(self.fd) })?;
         Ok(())
     }
 
@@ -309,14 +319,6 @@ impl FileDescriptor {
     }
 
     pub fn dup2(&self, fd: c_int) -> Result<Self> {
-        let result = unsafe { libc::fcntl(self.fd, libc::F_GETFD) };
-        if result == -1 {
-            return Err(Error::FileDescriptor(FileDescriptorError::InvalidOrClosed));
-        }
-        let result = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-        if result != -1 {
-            return Err(Error::FileDescriptor(FileDescriptorError::AlreadyUsed));
-        }
         debug_assert_eq!(
             fd,
             Errno::filter_result(unsafe { libc::dup2(self.fd, fd) })?,
@@ -389,14 +391,6 @@ impl Reader {
     }
 
     #[inline(always)]
-    fn ensure_open(&self) -> Result<()> {
-        if !self.fd.is_open() {
-            return FileDescriptorError::InvalidOrClosed.err();
-        }
-        Ok(())
-    }
-
-    #[inline(always)]
     fn read_internal(&mut self, buf: &mut [u8]) -> Result<usize> {
         let read_count = unsafe { libc::read(self.fd.fd, buf.as_mut_ptr().cast(), buf.len()) };
         if read_count < 0 {
@@ -406,12 +400,10 @@ impl Reader {
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.ensure_open()?;
         self.read_internal(buf)
     }
 
     pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.ensure_open()?;
         let mut count = 0usize;
         while count < buf.len() {
             let read_len = self.read_internal(&mut buf[count..])?;
@@ -467,14 +459,6 @@ impl Writer {
         self.fd.close()
     }
 
-    #[inline(always)]
-    pub fn ensure_open(&self) -> Result<()> {
-        if !self.fd.is_open() {
-            return FileDescriptorError::InvalidOrClosed.err();
-        }
-        Ok(())
-    }
-
     fn write_internal(&mut self, buf: &[u8]) -> Result<usize> {
         let result = unsafe { libc::write(self.fd.fd, buf.as_ptr().cast(), buf.len()) };
         if result < 0 {
@@ -484,15 +468,13 @@ impl Writer {
     }
 
     pub fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.ensure_open()?;
         self.write_internal(buf)
     }
 
     pub fn write_all(&mut self, buf: &[u8]) -> Result<usize> {
-        self.ensure_open()?;
         let mut count = 0usize;
         while count < buf.len() {
-            let write_len = self.write_internal(buf)?;
+            let write_len = self.write_internal(&buf[count..])?;
             if write_len == 0 {
                 break;
             }
@@ -587,41 +569,80 @@ impl MsgRecv {
         }
         Ok(Message::from_u8(buf[0]))
     }
+
+    // pub fn poll<const COUNT: usize>(receivers: &[&MsgRecv; COUNT], &mut [bool; COUNT]) -> 
 }
 
-pub enum EntryResult<C> {
-    Parent(Result<()>),
-    Child(Result<C>),
-}
-
-enum ParentResult {
-    Restart,
-    Exit,
+// TODO: Use this when implementing the session data system.
+#[repr(C, align(8))]
+struct ChildSenders {
+    msg: MsgSend,
+    data: Writer,
 }
 
 #[repr(C)]
 struct ContextInner {
     sender: Mutex<MsgSend>,
+    ref_count: RefCounter32,
     restart_count: u64,
     entry_time: SystemTime,
 }
 
 #[repr(transparent)]
-#[derive(Clone)]
 pub struct ForkContext {
-    inner: Arc<ContextInner>,
+    ptr: NonNull<ContextInner>,
+}
+
+impl ContextInner {
+    const LAYOUT: Layout = Layout::new::<Self>();
+
+    unsafe fn alloc(value: Self) -> NonNull<Self> {
+        unsafe {
+            let ptr = std::alloc::alloc(Self::LAYOUT).cast::<Self>();
+            let Some(ptr) = NonNull::new(ptr) else {
+                std::alloc::handle_alloc_error(Self::LAYOUT);
+            };
+            ptr.write(value);
+            ptr
+        }
+    }
+
+    unsafe fn dealloc(ptr: NonNull<Self>) {
+        unsafe {
+            std::alloc::dealloc(ptr.as_ptr().cast(), Self::LAYOUT);
+        }
+    }
 }
 
 impl ForkContext {
-    /// This is essentially the child index.
+    #[must_use]
+    #[inline(always)]
+    fn get_ref(&self) -> &ContextInner {
+        unsafe { self.ptr.as_ref() }
+    }
+
+    fn new(sender: MsgSend, restart_count: u64, entry_time: SystemTime) -> Self {
+        let inner = ContextInner {
+            sender: Mutex::new(sender),
+            ref_count: RefCounter32::new(1),
+            restart_count,
+            entry_time,
+        };
+        let ptr = unsafe { ContextInner::alloc(inner) };
+        Self {
+            ptr
+        }
+    }
+
+    /// The ID associated with this fork context.
     /// 
-    /// `0` would be the first, and all subsequent runs are numbered sequentially.
+    /// `0` would be the first fork, and all subsequent forks are numbered sequentially.
     /// 
     /// This can be considered to be the number of times that the process has been restarted.
     #[must_use]
     #[inline(always)]
     pub fn restart_id(&self) -> u64 {
-        self.inner.restart_count
+        self.get_ref().restart_count
     }
 
     /// The time that the entry function was initially called in the root process before any
@@ -629,13 +650,13 @@ impl ForkContext {
     #[must_use]
     #[inline(always)]
     pub fn entry_time(&self) -> SystemTime {
-        self.inner.entry_time
+        self.get_ref().entry_time
     }
 
     /// Send a message to the supervisor process.
     #[inline(always)]
     pub fn send(&self, msg: Message) -> Result<bool> {
-        let mut sender = self.inner.sender.lock().unwrap();
+        let mut sender = self.get_ref().sender.lock();
         sender.send(msg)
     }
 
@@ -656,7 +677,200 @@ impl ForkContext {
     }
 }
 
-pub unsafe fn entry<R>(main: fn(ForkContext) -> Result<R>) -> EntryResult<R> {
+impl Drop for ForkContext {
+    fn drop(&mut self) {
+        if let Ok(0) = self.get_ref().ref_count.decrement() {
+            unsafe { ContextInner::dealloc(self.ptr); }
+        }
+    }
+}
+
+impl Clone for ForkContext {
+    fn clone(&self) -> Self {
+        self.get_ref().ref_count.increment();
+        Self {
+            ptr: self.ptr,
+        }
+    }
+}
+
+#[must_use]
+pub enum EntryResult<C> {
+    Parent(Result<()>),
+    Child(C),
+}
+
+enum ParentResult {
+    Restart,
+    Exit,
+}
+
+// TODO: Placeholder type, do not keep.
+type Placeholder = ();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SignalAction {
+    Ignore,
+    Restart,
+    Exit(u8),
+    Filter(c_int),
+}
+
+impl SignalAction {
+    pub fn ignore(_: c_int) -> SignalAction {
+        SignalAction::Ignore
+    }
+
+    pub fn restart(_: c_int) -> SignalAction {
+        SignalAction::Restart
+    }
+
+    pub fn restart_if<const SIGNAL: c_int>(signal: c_int) -> SignalAction {
+        if signal == SIGNAL {
+            SignalAction::Restart
+        } else {
+            SignalAction::Filter(signal)
+        }
+    }
+
+    pub fn exit<const EXIT: u8>(_: c_int) -> SignalAction {
+        SignalAction::Exit(EXIT)
+    }
+
+    pub fn exit_if<const SIGNAL: c_int, const EXIT_CODE: u8>(signal: c_int) -> SignalAction {
+        if signal == SIGNAL {
+            SignalAction::Exit(EXIT_CODE)
+        } else {
+            SignalAction::Filter(signal)
+        }
+    }
+
+    pub fn exit_success(_: c_int) -> SignalAction {
+        SignalAction::Exit(0)
+    }
+
+    pub fn exit_failure(_: c_int) -> SignalAction {
+        SignalAction::Exit(1)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ExitAction {
+    Restart,
+    Exit(u8),
+    Filter(u8),
+}
+
+impl ExitAction {
+    pub fn restart(_: u8) -> ExitAction {
+        ExitAction::Restart
+    }
+
+    pub fn exit<const EXIT: u8>(_: u8) -> ExitAction {
+        ExitAction::Exit(EXIT)
+    }
+
+    pub fn exit_success(_: u8) -> ExitAction {
+        ExitAction::Exit(0)
+    }
+
+    pub fn exit_failure(_: u8) -> ExitAction {
+        ExitAction::Exit(1)
+    }
+}
+
+#[repr(C)]
+pub struct Entry<R: Sized + 'static> {
+    main: fn(ForkContext) -> R,
+    exit_signal_handler: fn(c_int) -> SignalAction,
+    restart_signal_handler: fn(c_int) -> SignalAction,
+    exit_handler: fn(u8) -> ExitAction,
+    restart_handler: fn(u8) -> ExitAction,
+}
+
+impl<R: Sized + 'static> Entry<R> {
+    #[must_use]
+    #[inline(always)]
+    pub const fn new(main: fn(ForkContext) -> R) -> Self {
+        Self {
+            main,
+            exit_signal_handler: SignalAction::Filter,
+            restart_signal_handler: SignalAction::Filter,
+            exit_handler: ExitAction::Filter,
+            restart_handler: ExitAction::Filter,
+        }
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn exit_signal_handler(mut self, handler: fn(c_int) -> SignalAction) -> Self {
+        self.exit_signal_handler = handler;
+        self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn restart_signal_handler(mut self, handler: fn(c_int) -> SignalAction) -> Self {
+        self.restart_signal_handler = handler;
+        self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn exit_handler(mut self, handler: fn(u8) -> ExitAction) -> Self {
+        self.exit_handler = handler;
+        self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn restart_handler(mut self, handler: fn(u8) -> ExitAction) -> Self {
+        self.restart_handler = handler;
+        self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    fn handle_exit_signal(&self, signal: c_int) -> SignalAction {
+        (self.exit_signal_handler)(signal)
+    }
+
+    #[must_use]
+    #[inline(always)]
+    fn handle_restart_signal(&self, signal: c_int) -> SignalAction {
+        (self.restart_signal_handler)(signal)
+    }
+
+    #[must_use]
+    #[inline(always)]
+    fn handle_exit(&self, exit_code: u8) -> ExitAction {
+        (self.exit_handler)(exit_code)
+    }
+
+    fn handle_restart(&self, exit_code: u8) -> ExitAction {
+        (self.restart_handler)(exit_code)
+    }
+
+    pub fn run(self) -> EntryResult<R> {
+        todo!()
+    }
+}
+
+fn foo() {
+    fn foo_main(ctx: ForkContext) -> Result<()> {
+        Ok(())
+    }
+    let result = Entry::new(foo_main)
+        .exit_handler(|code| {
+            if code != 0 {
+                ExitAction::Restart
+            } else {
+                ExitAction::Exit(0)
+            }
+        }).run();
+}
+
+pub unsafe fn entry<R>(main: fn(ForkContext) -> R) -> EntryResult<R> {
     let entry_time = SystemTime::now();
     let mut restart_count = 0u64;
     'fork_loop: loop {
@@ -673,14 +887,11 @@ pub unsafe fn entry<R>(main: fn(ForkContext) -> Result<R>) -> EntryResult<R> {
             0 => {
                 return EntryResult::Child((move || {
                     drop(reader);
-                    let sender = MsgSend { writer };
-                    let ctx = ForkContext {
-                        inner: Arc::new(ContextInner {
-                            restart_count,
-                            entry_time,
-                            sender: Mutex::new(sender),
-                        })
-                    };
+                    let ctx = ForkContext::new(
+                        MsgSend { writer },
+                        restart_count,
+                        entry_time,
+                    );
                     main(ctx)
                 })());
             }
@@ -698,11 +909,16 @@ pub unsafe fn entry<R>(main: fn(ForkContext) -> Result<R>) -> EntryResult<R> {
                             None => break 'receive_loop,
                         }
                     }
-                    // TODO: Catch status from waitpid to return exit code.
-                    let wait_result = unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+                    let mut status: c_int = 0;
+                    let wait_result = unsafe { libc::waitpid(pid, &mut status, 0) };
                     if wait_result == -1 {
                         return Errno::get_err();
                     }
+                    let exit_status = if unsafe { libc::WIFEXITED(status) } {
+                        Some(libc::WEXITSTATUS(status) as u8)
+                    } else {
+                        None
+                    };
                     Ok(exit_result)
                 })();
                 match result {

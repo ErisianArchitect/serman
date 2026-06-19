@@ -3,6 +3,7 @@
 name = "serman"
 description = "A low-level library for handling process restarts on unix systems."
 authors = ["Ada F. <https://github.com/ErisianArchitect>"]
+license = "Apache-2.0"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,3 +13,4 @@ name = "forker"
 [dependencies]
 libc = "0.2.186"
 thiserror = "2.0.18"
+parking_lot = "0.12.5"

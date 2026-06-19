@@ -31,6 +31,8 @@ pub enum PipeError {
     Other(c_int),
 }
 
+pub type PipeResult<T = (), E = PipeError> = std::result::Result<T, E>;
+
 impl PipeError {
     #[must_use]
     #[inline]
@@ -69,6 +71,8 @@ pub enum FdError {
     #[error("Other error: errno({0}, 0x{0:X})")]
     Other(c_int),
 }
+
+pub type FdResult<T = (), E = FdError> = std::result::Result<T, E>;
 
 impl FdError {
     #[must_use]
@@ -110,6 +114,8 @@ pub enum PollError {
     #[error("Other error: errno({0}, 0x{0:X})")]
     Other(c_int),
 }
+
+pub type PollResult<T = (), E = PollError> = std::result::Result<T, E>;
 
 impl PollError {
     #[must_use]
@@ -162,6 +168,8 @@ pub enum ReadError {
     #[error("Other error: errno({0}, 0x{0:X})")]
     Other(c_int),
 }
+
+pub type ReadResult<T = (), E = ReadError> = std::result::Result<T, E>;
 
 impl ReadError {
     #[must_use]
@@ -220,6 +228,8 @@ pub enum WriteError {
     Other(c_int),
 }
 
+pub type WriteResult<T = (), E = WriteError> = std::result::Result<T, E>;
+
 impl WriteError {
     #[must_use]
     #[inline]
@@ -257,6 +267,8 @@ pub enum ForkError {
     #[error("Other error: errno({0}, 0x{0:X})")]
     Other(c_int),
 }
+
+pub type ForkResult<T = (), E = ForkError> = std::result::Result<T, E>;
 
 impl ForkError {
     #[must_use]
@@ -297,6 +309,8 @@ pub enum WaitError {
     Other(c_int),
 }
 
+pub type WaitResult<T = (), E = WaitError> = std::result::Result<T, E>;
+
 impl WaitError {
     #[must_use]
     #[inline]
@@ -334,3 +348,5 @@ pub enum Error {
     #[error("errno({0})")]
     Errno(c_int),
 }
+
+pub type Result<T = (), E = Error> = std::result::Result<T, E>;

@@ -16,6 +16,8 @@
 
 mod entry;
 mod error;
+mod fd;
+mod fd_flags;
 mod ffi;
 mod ref_count;
 
@@ -31,6 +33,8 @@ use ref_count::RefCounter32;
 use libc::{
     c_int,
 };
+
+use fd_flags::{AccessMode, FdFlags};
 
 #[cfg(not(unix))]
 compile_error!("This library is for unix systems, and the target is not a unix system.");
@@ -121,217 +125,6 @@ impl FileDescriptorError {
 impl Error {
     pub const fn err<T>(self) -> Result<T> {
         Err(self)
-    }
-}
-
-macro_rules! fd_flags {
-    (
-        $(
-            $vis:vis $flag:ident = $value:expr
-        ),*
-        $(,)?
-    ) => {
-        #[repr(transparent)]
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct FdFlags(c_int);
-
-        impl FdFlags {
-            $(
-                $vis const $flag: Self = Self($value);
-            )*
-        }
-    };
-}
-
-fd_flags! {
-    pub R_ONLY = libc::O_RDONLY,
-    pub W_ONLY = libc::O_WRONLY,
-    pub RW = libc::O_RDWR,
-    pub ACCESS_MODE = libc::O_ACCMODE,
-}
-
-impl FdFlags {
-    #[must_use]
-    #[inline(always)]
-    pub const fn from_bits(flags: c_int) -> Self {
-        Self(flags)
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn bits(self) -> c_int {
-        self.0
-    }
-    
-    #[must_use]
-    #[inline(always)]
-    pub const fn has_all(self, flags: Self) -> bool {
-        self.0 & flags.0 == flags.0
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn has_any(self, flags: Self) -> bool {
-        self.0 & flags.0 != 0
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn has_none(self, flags: Self) -> bool {
-        self.0 & flags.0 == 0
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn or(self, flags: Self) -> Self {
-        Self(self.0 | flags.0)
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn and(self, flags: Self) -> Self {
-        Self(self.0 & flags.0)
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn xor(self, flags: Self) -> Self {
-        Self(self.0 ^ flags.0)
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn eq(self, flags: Self) -> bool {
-        self.0 == flags.0
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn ne(self, flags: Self) -> bool {
-        self.0 != flags.0
-    }
-
-    #[must_use]
-    #[inline(always)]
-    pub const fn access_mode(self) -> Option<AccessMode> {
-        Some(match self.and(Self::ACCESS_MODE) {
-            Self::R_ONLY => AccessMode::ReadOnly,
-            Self::W_ONLY => AccessMode::WriteOnly,
-            Self::RW => AccessMode::ReadWrite,
-            _ => return None,
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AccessMode {
-    /// Access is read only.
-    ReadOnly = 0,
-    /// Access is write only.
-    WriteOnly = 1,
-    /// Access is read and write.
-    ReadWrite = 2,
-}
-
-#[repr(transparent)]
-pub struct FileDescriptor {
-    fd: c_int,
-}
-
-impl Drop for FileDescriptor {
-    fn drop(&mut self) {
-        match self.close() {
-            Ok(()) => {},
-            Err(err) => eprintln!("FileDescriptor Drop failed: {err}"),
-        }
-    }
-}
-
-impl FileDescriptor {
-    /// Creates a new [FileDescriptor] from its raw value.
-    /// 
-    /// File descriptor must be both open and valid.
-    #[must_use]
-    #[inline(always)]
-    pub fn from_fd(fd: c_int) -> Result<Self> {
-        Errno::filter_result(unsafe { libc::fcntl(fd, libc::F_GETFD) })?;
-        Ok(Self {
-            fd,
-        })
-    }
-
-    /// Get the flags for this file descriptor.
-    pub fn flags(&self) -> Result<FdFlags> {
-        let flags = Errno::filter_result(unsafe { libc::fcntl(self.fd, libc::F_GETFL) })?;
-        Ok(FdFlags(flags))
-    }
-
-    /// Get the access mode for this file descriptor.
-    pub fn access_mode(&self) -> Result<AccessMode> {
-        let flags = self.flags()?;
-        Ok(match flags.and(FdFlags::ACCESS_MODE) {
-            FdFlags::R_ONLY => AccessMode::ReadOnly,
-            FdFlags::W_ONLY => AccessMode::WriteOnly,
-            FdFlags::RW => AccessMode::ReadWrite,
-            _ => unreachable!(),
-        })
-    }
-
-    #[inline]
-    pub fn is_reader(&self) -> Result<bool> {
-        Ok(self.access_mode()? != AccessMode::WriteOnly)
-    }
-
-    #[inline]
-    pub fn is_read_only(&self) -> Result<bool> {
-        Ok(self.access_mode()? == AccessMode::ReadOnly)
-    }
-
-    #[inline]
-    pub fn is_writer(&self) -> Result<bool> {
-        Ok(self.access_mode()? != AccessMode::ReadOnly)
-    }
-
-    #[inline]
-    pub fn is_write_only(&self) -> Result<bool> {
-        Ok(self.access_mode()? == AccessMode::WriteOnly)
-    }
-
-    #[inline]
-    pub fn is_read_write(&self) -> Result<bool> {
-        Ok(self.access_mode()? == AccessMode::ReadWrite)
-    }
-    
-    pub fn close(&mut self) -> Result {
-        Errno::filter_result(unsafe { libc::close(self.fd) })?;
-        Ok(())
-    }
-
-    #[inline]
-    pub fn is_open(&self) -> bool {
-        let result = unsafe { libc::fcntl(self.fd, libc::F_GETFD) };
-        return result != -1;
-    }
-
-    pub fn dup(&self) -> Result<Self> {
-        Ok(Self {
-            fd: Errno::filter_result(unsafe { libc::dup(self.fd) })?,
-        })
-    }
-
-    pub fn dup2(&self, fd: c_int) -> Result<Self> {
-        debug_assert_eq!(
-            fd,
-            Errno::filter_result(unsafe { libc::dup2(self.fd, fd) })?,
-            "dup2 new_fd not equal to returned fd.",
-        );
-        Ok(Self { fd })
-    }
-
-    pub fn rebind(&mut self, fd: c_int) -> Result {
-        let new = self.dup2(fd)?;
-        *self = new;
-        Ok(())
     }
 }
 
@@ -671,7 +464,7 @@ impl ForkContext {
     /// Send a restart request to the supervisor process.
     /// 
     /// This will not cause the process to restart immediately, instead it will restart
-    /// on process exit. You can call [Context::cancel] to cancel the restart and proceed
+    /// on process exit. You can call [ForkContext::cancel] to cancel the restart and proceed
     /// to exit from the parent process.
     #[inline(always)]
     pub fn restart(&self) -> Result<bool> {

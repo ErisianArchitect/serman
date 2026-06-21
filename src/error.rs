@@ -330,11 +330,59 @@ impl WaitError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, thiserror::Error)]
+pub enum DupError {
+    #[error("Invalid file descriptor. Either oldfd is not open, or newfd is out of the allowed range for file descriptors. (See EBADF)")]
+    BadFile,
+    #[cfg(target_os = "linux")]
+    #[error("Race condition. (See EBUSY)")]
+    Busy,
+    #[error("Operation was interrupted by a signal. (See EINTR)")]
+    Interrupted,
+    #[error("oldfd was equal to newfd. (See EINVAL)")]
+    SameFile,
+    #[error("Per-process limit for open files has been reached. (See EMFILE)")]
+    ProcessLimit,
+    #[error("System-wide limit for open files has been reached. (See ENFILE)")]
+    SystemLimit,
+    #[error("Out of memory. (See ENOMEM)")]
+    OutOfMemory,
+    #[error("Other error: errno({0}, 0x{0:X})")]
+    Other(c_int),
+}
+
+pub type DupResult<T = (), E = DupError> = std::result::Result<T, E>;
+
+impl DupError {
+    #[must_use]
+    #[inline]
+    pub const fn match_error(errno: c_int) -> Self {
+        match errno {
+            libc::EBADF => Self::BadFile,
+            #[cfg(target_os = "linux")]
+            libc::EBUSY => Self::Busy,
+            libc::EINTR => Self::Interrupted,
+            libc::EINVAL => Self::SameFile,
+            libc::EMFILE => Self::ProcessLimit,
+            libc::ENFILE => Self::SystemLimit,
+            other => Self::Other(other),
+        }
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn get_err<T>() -> DupResult<T> {
+        Err(Self::match_error(errno()))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, thiserror::Error)]
 pub enum Error {
     #[error("Pipe Error: {0}")]
     Pipe(#[from] PipeError),
     #[error("File Descriptor Error: {0}")]
     Fd(#[from] FdError),
+    #[error("Dup Error: {0}")]
+    Dup(#[from] DupError),
     #[error("Poll Error: {0}")]
     Poll(#[from] PollError),
     #[error("Read Error: {0}")]

@@ -7,6 +7,7 @@ pub struct RefCounter32 {
 }
 
 impl RefCounter32 {
+    #[must_use]
     #[inline(always)]
     pub fn new(count: u32) -> Self {
         Self {
@@ -14,6 +15,7 @@ impl RefCounter32 {
         }
     }
 
+    #[must_use]
     #[inline(always)]
     pub fn count(&self) -> u32 {
         self.count.load(Ordering::Acquire)
@@ -25,8 +27,8 @@ impl RefCounter32 {
         self.count.fetch_add(1, Ordering::SeqCst)
     }
 
-    // Decrements and returns `Ok(new_count)`.
-    // Returns `Err(())` if count was already 0.
+    /// Decrements and returns `Ok(new_count)`.
+    /// Returns `Err(())` if count was already 0.
     pub fn decrement(&self) -> Result<u32, ()> {
         // cas loop for decrementing so that we do not decrement beyond 0.
         let mut count = self.count.load(Ordering::Relaxed);
@@ -43,7 +45,8 @@ impl RefCounter32 {
             ) {
                 Ok(_) => return Ok(decremented_count),
                 Err(0) => return Err(()),
-                Err(previous) => count = previous,
+                // Although this is called current_count, it may change by the next time compare_exchange is called.
+                Err(current_count) => count = current_count,
             }
             std::hint::spin_loop();
         }

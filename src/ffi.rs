@@ -1,3 +1,20 @@
+//  SPDX-License-Identifier: Apache-2.0
+//  Copyright © 2026-present Ada F. <https://github.com/ErisianArchitect>
+//  
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//  
+//      http://www.apache.org/licenses/LICENSE-2.0
+//  
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//:---[END-HEADER]---
+
+
 
 use libc::{
     // Types
@@ -37,6 +54,9 @@ use crate::error::{
     WriteResult,
 };
 
+//-start
+
+// TODO: Do something with this.
 /// Raw, low-level file descriptor.
 #[repr(transparent)]
 pub struct FileDesc {
@@ -98,6 +118,9 @@ pub unsafe fn pipe() -> PipeResult<PipeFds> {
     Ok(fds)
 }
 
+// This function is specifically written for writing to unix pipes. It's just a wrapper around libc's `write`, so it
+// will likely work just fine for other writing purpose that require libc's write. It just gives you
+// `Result<count_written>` instead of arcane error sentinels.
 #[inline]
 pub unsafe fn write(fd: c_int, buf: &[u8]) -> WriteResult<usize> {
     let write_count = unsafe { libc::write(fd, buf.as_ptr().cast(), buf.len()) };
@@ -107,15 +130,22 @@ pub unsafe fn write(fd: c_int, buf: &[u8]) -> WriteResult<usize> {
     Ok(write_count as usize)
 }
 
+// This was written for writing to unix pipes. There are no guarantees with other file descriptors, or really even any guarantees at all!
 #[inline]
 pub unsafe fn write_all(fd: c_int, buf: &[u8]) -> WriteResult<usize> {
     let mut count = 0usize;
     while count < buf.len() {
-        let write_len = unsafe { write(fd, &buf[count..])? };
-        if write_len == 0 {
-            break;
+        // to safely get a subslice of buf before casting it to a pointer.
+        let rest = &buf[count..buf.len()];
+        // Above, there is an implementation of `write` that is suitable as a wrapper for `libc's write`, but there's one less branch
+        // if it's written without the wrapper here.
+        match unsafe { libc::write(fd, rest.as_ptr().cast(), rest.len()) } {
+            -1 => return WriteError::get_err(),
+            // This means that nothing was written. I don't really know what this means, sorry. the manual says that it's unspecified
+            // (at least in terms of writing to a pipe, which this function was written for)
+            0 => break,
+            len => count += len as usize,
         }
-        count += write_len;
     }
     Ok(count)
 }
@@ -133,11 +163,13 @@ pub unsafe fn read(fd: c_int, buf: &mut [u8]) -> ReadResult<usize> {
 pub unsafe fn read_exact(fd: c_int, buf: &mut [u8]) -> ReadResult<usize> {
     let mut count = 0usize;
     while count < buf.len() {
-        let read_len = unsafe { read(fd, &mut buf[count..])? };
-        if read_len == 0 {
-            break;
+        let end = buf.len();
+        let rest = &mut buf[count..end];
+        match unsafe { libc::read(fd, rest.as_mut_ptr().cast(), rest.len()) } {
+            -1 => return ReadError::get_err(),
+             0 => break,
+             len => count += len as usize,
         }
-        count += read_len;
     }
     Ok(count)
 }

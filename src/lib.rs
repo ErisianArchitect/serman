@@ -672,6 +672,7 @@ fn foo() {
         }).run();
 }
 
+//= src/lib.rs::entry
 pub unsafe fn entry<R>(main: fn(ForkContext) -> R) -> EntryResult<R> {
     let entry_time = SystemTime::now();
     let mut restart_count = 0u64;

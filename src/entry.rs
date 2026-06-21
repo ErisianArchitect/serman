@@ -1,3 +1,20 @@
+//  SPDX-License-Identifier: Apache-2.0
+//  Copyright © 2026-present Ada F. <https://github.com/ErisianArchitect>
+//  
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//  
+//      http://www.apache.org/licenses/LICENSE-2.0
+//  
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+//:---[END-HEADER]---
+
+
 use std::marker::PhantomData;
 use std::process::ExitCode;
 
@@ -270,11 +287,11 @@ impl<
     /// Attaches an exit handler that will restart when the `when` function returns [true].
     pub fn restart_when<F: Fn(u8) -> bool>(self, when: F) -> Entry<R, Main, ESH, RSH, impl Fn(u8) -> ExitAction, RH> {
         self.exit_handler(move |exit_code| {
-            util::select_copy(
-                ExitAction::Filter(exit_code),
-                ExitAction::Restart,
-                when(exit_code),
-            )
+            if when(exit_code) {
+                ExitAction::Restart
+            } else {
+                ExitAction::Filter(exit_code)
+            }
         })
     }
 
@@ -319,11 +336,11 @@ impl<
     /// Attaches a restart handler that will redirect to an exit when the `when` function returns [true].
     pub fn exit_when<F: Fn(u8) -> bool>(self, when: F) -> Entry<R, Main, ESH, RSH, EH, impl Fn(u8) -> ExitAction> {
         self.restart_handler(move |exit_code| {
-            util::select_copy(
-                ExitAction::Filter(exit_code),
-                ExitAction::Exit(exit_code),
-                when(exit_code),
-            )
+            if when(exit_code) {
+                ExitAction::Exit(exit_code)
+            } else {
+                ExitAction::Filter(exit_code)
+            }
         })
     }
 
@@ -348,7 +365,7 @@ impl<
     RH: ChildExitHandler,
 > Entry<R, Main, ESH, RSH, EH, RH>
 {
-    //= entry.rs::run
+    //= src/entry.rs::run
     pub fn run(self) -> ForkResult<Result<ExitCode>, R> {
         // TODO: Finish this function.
         todo!()

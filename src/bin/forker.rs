@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use serman::{ForkContext};
 
+//= forker.rs::real_main
 fn real_main(ctx: ForkContext) -> serman::Result<()> {
     let ctx2 = ctx.clone();
     let pid = std::process::id();
@@ -24,6 +25,7 @@ fn real_main(ctx: ForkContext) -> serman::Result<()> {
     // Ok(())
 }
 
+//= forker.rs::main
 fn main() {
     unsafe {
         match serman::entry(real_main) {

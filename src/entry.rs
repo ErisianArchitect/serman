@@ -5,6 +5,7 @@ use libc::c_int;
 
 use crate::ForkContext;
 use crate::error::Result;
+use crate::util;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SignalAction {
@@ -265,6 +266,24 @@ impl<
             _phantom: PhantomData,
         }
     }
+
+    /// Attaches an exit handler that will restart when the `when` function returns [true].
+    pub fn restart_when<F: Fn(u8) -> bool>(self, when: F) -> Entry<R, Main, ESH, RSH, impl Fn(u8) -> ExitAction, RH> {
+        self.exit_handler(move |exit_code| {
+            util::select_copy(
+                ExitAction::Filter(exit_code),
+                ExitAction::Restart,
+                when(exit_code),
+            )
+        })
+    }
+
+    /// Attaches an exit handler that will restart when the child exits with a failure code (`exit_code != 0`).
+    #[must_use]
+    #[inline(always)]
+    pub fn restart_on_failure(self) -> Entry<R, Main, ESH, RSH, impl Fn(u8) -> ExitAction, RH> {
+        self.restart_when(|exit_code| exit_code != 0)
+    }
 }
 
 impl<
@@ -295,6 +314,22 @@ impl<
             restart_handler: handler,
             _phantom: PhantomData,
         }
+    }
+
+    /// Attaches a restart handler that will redirect to an exit when the `when` function returns [true].
+    pub fn exit_when<F: Fn(u8) -> bool>(self, when: F) -> Entry<R, Main, ESH, RSH, EH, impl Fn(u8) -> ExitAction> {
+        self.restart_handler(move |exit_code| {
+            util::select_copy(
+                ExitAction::Filter(exit_code),
+                ExitAction::Exit(exit_code),
+                when(exit_code),
+            )
+        })
+    }
+
+    /// Attaches a restart handler that will perform a regular exit when the success code is `0`.
+    pub fn exit_on_success(self) -> Entry<R, Main, ESH, RSH, EH, impl Fn(u8) -> ExitAction> {
+        self.exit_when(|exit_code| exit_code == 0)
     }
 }
 
@@ -327,13 +362,8 @@ mod tests {
     #[test]
     fn sandbox() {
         let entry = Entry::new()
-            .exit_handler(|exit_code| {
-                if exit_code != 0 {
-                    ExitAction::Restart
-                } else {
-                    ExitAction::Filter(0)
-                }
-            })
+            .restart_on_failure()
+            .exit_on_success()
             .main(|ctx| ctx.restart());
         let result = entry.run();
     }

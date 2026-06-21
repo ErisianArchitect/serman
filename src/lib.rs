@@ -20,6 +20,7 @@ mod fd;
 mod fd_flags;
 mod ffi;
 mod ref_count;
+mod util;
 
 use parking_lot::Mutex;
 use std::{time::SystemTime};

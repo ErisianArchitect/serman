@@ -89,7 +89,9 @@ pub enum Msg {
     /// message signifies that the data is finished sending.
     Data = 0x03,
     ResetData = 0x04,
-    // TODO: Update Msg::MAX if variants are ever changed.
+    FreeData = 0x05,
+    Value(u8),
+    // TODO: Update MAX_KNOWN and from_u8() whenever new variants are added.
 }
 
 pub struct MsgReader {
@@ -103,14 +105,41 @@ pub struct MsgWriter {
 //=impls
 
 impl Msg {
-    // TODO: Update Msg::MAX if variants are ever changed.
-    const MAX: u8 = Self::ResetData as u8;
-
-    pub const fn from_u8(value: u8) -> Option<Self> {
-        if value <= Self::MAX {
-            Some(unsafe { ::core::mem::transmute(value) })
+    const YIELD: u8 = 0x00;
+    const RESTART: u8 = 0x01;
+    const CANCEL: u8 = 0x02;
+    const DATA: u8 = 0x03;
+    const RESET: u8 = 0x04;
+    const FREE: u8 = 0x05;
+    pub const MAX_KNOWN: u8 = 0x05;
+    pub const fn from_u8(value: u8) -> Self {
+        const ALL: [Msg; 6] = [
+            Msg::Yield,
+            Msg::Restart,
+            Msg::Cancel,
+            Msg::Data,
+            Msg::ResetData,
+            Msg::FreeData,
+        ];
+        let index = value as usize;
+        if index < ALL.len() {
+            ALL[index]
         } else {
-            None
+            Self::Value(value)
+        }
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub const fn as_u8(self) -> u8 {
+        match self {
+            Msg::Yield => Self::YIELD,
+            Msg::Restart => Self::RESTART,
+            Msg::Cancel => Self::CANCEL,
+            Msg::Data => Self::DATA,
+            Msg::ResetData => Self::RESET,
+            Msg::FreeData => Self::FREE,
+            Msg::Value(unk) => unk,
         }
     }
 }
@@ -137,7 +166,7 @@ impl MsgReader {
         if read_len == 0 {
             return Ok(None)
         }
-        Ok(Msg::from_u8(buf[0]))
+        Ok(Some(Msg::from_u8(buf[0])))
     }
 
     #[inline]
@@ -168,7 +197,7 @@ impl MsgWriter {
 
     #[inline]
     pub fn write_msg(&mut self, msg: Msg) -> WriteResult<bool> {
-        let buf = [msg as u8; 1];
+        let buf = [msg.as_u8(); 1];
         let write_len = self.write_data(&buf)?;
         Ok(write_len == 1)
     }

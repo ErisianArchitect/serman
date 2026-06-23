@@ -41,7 +41,10 @@ use crate::messaging::{
     Msg,
     MsgReader,
     MsgWriter,
-}
+};
+use crate::data::{
+    DataBuffer,
+};
 
 // TODO: This is temporary.
 pub type ForkContext = ();
@@ -168,11 +171,11 @@ impl<R, F: FnOnce(ForkContext) -> R> SermanMain<R> for F {
 }
 
 pub trait DefaultValue {}
-pub trait NonDefaultMain<R> {}
+pub trait NonDefault<M> {}
 
 impl DefaultValue for () {}
 
-impl<R, F: FnOnce(ForkContext) -> R> NonDefaultMain<fn(ForkContext) -> R> for F {}
+impl<R, F: FnOnce(ForkContext) -> R> NonDefault<fn(ForkContext) -> R> for F {}
 
 pub struct Entry<
     R = (),
@@ -382,7 +385,7 @@ pub enum ForkResult<P, C> {
 
 impl<
     R,
-    Main: SermanMain<R> + NonDefaultMain<fn(ForkContext) -> R>,
+    Main: SermanMain<R> + NonDefault<fn(ForkContext) -> R>,
     ESH: ChildSignalHandler,
     RSH: ChildSignalHandler,
     EH: ChildExitHandler,
@@ -390,46 +393,95 @@ impl<
 > Entry<R, Main, ESH, RSH, EH, RH>
 {
     //= src/entry.rs::run
-    pub fn run(self, restart: bool) -> Result<Fork<ExitCode, R>> {
+    pub fn run(self, restart: bool) -> Fork<Result<ExitCode>, Result<R>> {
         let entry_time = SystemTime::now();
         let mut restart_count = 0u64;
-        let mut data = todo!();
+        let mut data = DataBuffer::new();
         'fork_loop: loop {
-            let fds = unsafe { pipe()? };
-            let reader = MsgReader::new(FileDescriptor { fd: fds.reader })?;
-            let writer = MsgReader::new(FileDescriptor { fd: fds.writer })?;
-            // TODO: Add Reader/Writer safe wrappers. Add data Reader/Writer
-            //       Currently, the reader/writer are plain c_ints, they need
-            //       To be converted into ReaderWriter, and there also needs
-            //       to be a data Reader/Writer. There will also need to be
-            //       safe wrappers for sending/receiving 1 byte messages.
-            let fork: Fork<libc::pid_t> = unsafe { fork()? };
+            // tryer? I hardly know 'er!
+            macro_rules! tryer {
+                ($e:expr) => {
+                    match ($e) {
+                        Ok(ok) => ok,
+                        Err(err) => return Fork::Parent(Err(err.into())),
+                    }
+                }
+            }
+            let fds = tryer!(unsafe { pipe() });
+            let mut reader = tryer!(MsgReader::new(FileDescriptor { fd: fds.reader }));
+            let mut writer = tryer!(MsgWriter::new(FileDescriptor { fd: fds.writer }));
+            let fork: Fork<libc::pid_t> = tryer!(unsafe { fork() });
             match fork {
                 Fork::Parent(child_pid) => {
                     drop(writer);
                     let mut restart_requested = restart;
-                    'read_loop: {
-                        match reader.read_msg() {
-                            Ok(Some(Msg::Yield)) => continue 'read_loop,
-                            Ok(Some(Msg::Restart)) => restart_requested = true,
-                            Ok(Some(Msg::Cancel)) => restart_requested = false,
-                            Ok(Some(Msg::Data)) => {
+                    'read_loop: loop {
+                        match tryer!(reader.read_msg()) {
+                            Some(Msg::Yield) => continue 'read_loop,
+                            Some(Msg::Restart) => restart_requested = true,
+                            Some(Msg::Cancel) => restart_requested = false,
+                            Some(Msg::Data) => {
                                 'data_read_loop: loop {
-                                    
+                                    let mut buffer = [0u8; 4096];
+                                    match tryer!(reader.read_usize()) {
+                                        // 0 is a sentinel value that means that there is no more data being sent.
+                                        Some(0) => break 'data_read_loop,
+                                        Some(data_len) => {
+                                            let mut remaining = data_len;
+                                            while remaining != 0 {
+                                                if remaining > buffer.len() {
+                                                    let read_len = tryer!(reader.read_data(&mut buffer));
+                                                    if read_len == 0 {
+                                                        break 'data_read_loop;
+                                                    }
+                                                    remaining -= read_len;
+                                                    data.push_bytes(&buffer[..read_len]);
+                                                } else {
+                                                    let read_len = tryer!(reader.read_data(&mut buffer[..remaining]));
+                                                    if read_len == 0 {
+                                                        break 'data_read_loop;
+                                                    }
+                                                    remaining -= read_len;
+                                                    data.push_bytes(&buffer[..read_len]);
+                                                }
+                                            }
+                                        }
+                                        // This means that the read end has closed.
+                                        None => break 'data_read_loop,
+                                    }
                                 }
                             },
-                            Ok(Some(Msg::ResetData)) => {
-                                
+                            Some(Msg::ResetData) => data.clear(),
+                            Some(Msg::FreeData) => data.dealloc(),
+                            Some(Msg::Value(msg)) => {
+                                // TODO:
+                                todo!("Custom messages not implemented.");
                             },
-                            Ok(None) => break 'read_loop,
-                            Err(err) => return Err(Error::Read(err)),
+                            // This means the write end was closed.
+                            None => break 'read_loop,
                         }
+                    } // end 'read_loop
+                    let (_, status) = tryer!(unsafe { waitpid(child_pid) });
+                    todo!("status handling is not yet implemented.");
+                    // TODO: signal status, exit status.
+                    if restart_requested {
+                        // use restart_handler.
+                        restart_count += 1;
+                        continue 'fork_loop;
                     }
-                    todo!()
                 },
                 Fork::Child(parent_pid) => {
+                    macro_rules! tryer {
+                        ($e:expr) => {
+                            match ($e) {
+                                Ok(ok) => ok,
+                                Err(err) => return Fork::Child(Err(err.into())),
+                            }
+                        }
+                    }
                     drop(reader);
-                    todo!()
+                    // tryer!(writer.write_msg(Msg::Yield));
+                    
                 },
             }
         }

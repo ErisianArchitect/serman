@@ -82,9 +82,8 @@ pub unsafe fn dup2(src: c_int, dst: c_int) -> DupResult<c_int> {
 }
 
 /// Used to obtain the reader and writer fds from a pipe call.
-#[repr(C)]
-#[cfg_attr(any(target_arch = "avr", target_arch = "msp430"), repr(align(4)))]
-#[cfg_attr(not(any(target_arch = "avr", target_arch = "msp430")), repr(align(8)))]
+#[cfg_attr(any(target_arch = "avr", target_arch = "msp430"), repr(C, align(4)))]
+#[cfg_attr(not(any(target_arch = "avr", target_arch = "msp430")), repr(C, align(8)))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PipeFds {
     pub reader: c_int,
@@ -275,7 +274,7 @@ impl PollEvents {
     #[must_use]
     #[inline(always)]
     pub const fn new() -> Self {
-        Self(0);
+        Self(0)
     }
 
     #[must_use]

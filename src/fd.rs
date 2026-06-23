@@ -33,14 +33,14 @@ use crate::ffi;
 //= src/fd.rs::FileDescriptor
 #[repr(transparent)]
 pub struct FileDescriptor {
-    fd: c_int,
+    pub(crate) fd: c_int,
 }
 
 impl Drop for FileDescriptor {
     fn drop(&mut self) {
         match self.close() {
             Ok(()) => {},
-            Err(_) => (/* Ignore Error */),
+            Err(_) => {/* Ignore Error */},
         }
     }
 }
@@ -60,7 +60,7 @@ impl FileDescriptor {
 
     /// Get the flags for this file descriptor.
     pub fn flags(&self) -> FdResult<FdFlags> {
-        let flags = unsafe { ffi::fd_flags(self.fd)? };
+        let flags = unsafe { ffi::fd_status(self.fd)? };
         Ok(FdFlags(flags))
     }
 
@@ -144,3 +144,5 @@ impl FileDescriptor {
         Ok(())
     }
 }
+
+fn foo(a: i32, b: u32, c: bool) {}

@@ -17,12 +17,34 @@
 
 use std::marker::PhantomData;
 use std::process::ExitCode;
+use std::time::{SystemTime};
 
 use libc::c_int;
 
-use crate::ForkContext;
-use crate::error::Result;
-use crate::util;
+// use crate::ForkContext;
+use crate::error::{
+    Error, Result,
+};
+use crate::fd::FileDescriptor;
+use crate::ffi::{
+    fork,
+    pipe,
+    waitpid,
+    poll,
+    PipeFds,
+    read, read_exact,
+    write, write_all,
+    Fork,
+    WaitStatus,
+};
+use crate::messaging::{
+    Msg,
+    MsgReader,
+    MsgWriter,
+}
+
+// TODO: This is temporary.
+pub type ForkContext = ();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SignalAction {
@@ -356,6 +378,8 @@ pub enum ForkResult<P, C> {
     Child(C),
 }
 
+
+
 impl<
     R,
     Main: SermanMain<R> + NonDefaultMain<fn(ForkContext) -> R>,
@@ -366,9 +390,49 @@ impl<
 > Entry<R, Main, ESH, RSH, EH, RH>
 {
     //= src/entry.rs::run
-    pub fn run(self) -> ForkResult<Result<ExitCode>, R> {
-        // TODO: Finish this function.
-        todo!()
+    pub fn run(self, restart: bool) -> Result<Fork<ExitCode, R>> {
+        let entry_time = SystemTime::now();
+        let mut restart_count = 0u64;
+        let mut data = todo!();
+        'fork_loop: loop {
+            let fds = unsafe { pipe()? };
+            let reader = MsgReader::new(FileDescriptor { fd: fds.reader })?;
+            let writer = MsgReader::new(FileDescriptor { fd: fds.writer })?;
+            // TODO: Add Reader/Writer safe wrappers. Add data Reader/Writer
+            //       Currently, the reader/writer are plain c_ints, they need
+            //       To be converted into ReaderWriter, and there also needs
+            //       to be a data Reader/Writer. There will also need to be
+            //       safe wrappers for sending/receiving 1 byte messages.
+            let fork: Fork<libc::pid_t> = unsafe { fork()? };
+            match fork {
+                Fork::Parent(child_pid) => {
+                    drop(writer);
+                    let mut restart_requested = restart;
+                    'read_loop: {
+                        match reader.read_msg() {
+                            Ok(Some(Msg::Yield)) => continue 'read_loop,
+                            Ok(Some(Msg::Restart)) => restart_requested = true,
+                            Ok(Some(Msg::Cancel)) => restart_requested = false,
+                            Ok(Some(Msg::Data)) => {
+                                'data_read_loop: loop {
+                                    
+                                }
+                            },
+                            Ok(Some(Msg::ResetData)) => {
+                                
+                            },
+                            Ok(None) => break 'read_loop,
+                            Err(err) => return Err(Error::Read(err)),
+                        }
+                    }
+                    todo!()
+                },
+                Fork::Child(parent_pid) => {
+                    drop(reader);
+                    todo!()
+                },
+            }
+        }
     }
 }
 
@@ -378,10 +442,10 @@ mod tests {
 
     #[test]
     fn sandbox() {
-        let entry = Entry::new()
-            .restart_on_failure()
-            .exit_on_success()
-            .main(|ctx| ctx.restart());
-        let result = entry.run();
+        // let entry = Entry::new()
+        //     .restart_on_failure()
+        //     .exit_on_success()
+        //     .main(|ctx| ctx.restart());
+        // let result = entry.run();
     }
 }

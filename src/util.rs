@@ -36,3 +36,13 @@ pub const fn select_copy<T: Copy>(false_: T, true_: T, condition: bool) -> T {
         false_
     }
 }
+
+#[must_use]
+#[inline(always)]
+pub const fn select_ref<'a, T>(false_: &'a T, true_: &'a T, condition: bool) -> &'a T {
+    if condition {
+        true_
+    } else {
+        false_
+    }
+}

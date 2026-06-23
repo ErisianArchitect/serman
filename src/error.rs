@@ -83,6 +83,10 @@ pub enum FdError {
     Prohibited,
     #[error("File descriptor is not an open file descriptor. (See EBADF)")]
     BadFile,
+    #[error("File is not a reader.")]
+    NotAReader,
+    #[error("File is not a writer.")]
+    NotAWriter,
     #[error("Other error: errno({0}, 0x{0:X})")]
     Other(c_int),
 }

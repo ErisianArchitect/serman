@@ -16,7 +16,7 @@
 
 
 
-use libc::{
+use ::libc::{
     // Types
     c_int, c_uint, c_short,
     pid_t,
@@ -65,7 +65,7 @@ pub struct FileDesc {
 
 #[inline]
 pub unsafe fn dup(fd: c_int) -> DupResult<c_int> {
-    let dup_result = unsafe { libc::dup(fd) };
+    let dup_result = unsafe { ::libc::dup(fd) };
     if dup_result == -1 {
         return DupError::get_err();
     }
@@ -74,7 +74,7 @@ pub unsafe fn dup(fd: c_int) -> DupResult<c_int> {
 
 #[inline]
 pub unsafe fn dup2(src: c_int, dst: c_int) -> DupResult<c_int> {
-    let dup_result = unsafe { libc::dup2(src, dst) };
+    let dup_result = unsafe { ::libc::dup2(src, dst) };
     if dup_result == -1 {
         return DupError::get_err();
     }
@@ -108,9 +108,14 @@ impl PipeFds {
 }
 
 #[inline]
-pub unsafe fn pipe() -> PipeResult<PipeFds> {
+pub unsafe fn pipe(close_on_exec: bool) -> PipeResult<PipeFds> {
     let mut fds = PipeFds::zeroed();
-    let pipe_result = unsafe { libc::pipe(fds.as_mut_fds()) };
+    let flags = if close_on_exec {
+        libc::O_CLOEXEC
+    } else {
+        0
+    };
+    let pipe_result = unsafe { ::libc::pipe2(fds.as_mut_fds(), flags) };
     if pipe_result == -1 {
         return PipeError::get_err();
     }
@@ -122,7 +127,7 @@ pub unsafe fn pipe() -> PipeResult<PipeFds> {
 // `Result<count_written>` instead of arcane error sentinels.
 #[inline]
 pub unsafe fn write(fd: c_int, buf: &[u8]) -> WriteResult<usize> {
-    let write_count = unsafe { libc::write(fd, buf.as_ptr().cast(), buf.len()) };
+    let write_count = unsafe { ::libc::write(fd, buf.as_ptr().cast(), buf.len()) };
     if write_count == -1 {
         return WriteError::get_err();
     }
@@ -138,7 +143,7 @@ pub unsafe fn write_all(fd: c_int, buf: &[u8]) -> WriteResult<usize> {
         let rest = &buf[count..buf.len()];
         // Above, there is an implementation of `write` that is suitable as a wrapper for `libc's write`, but there's one less branch
         // if it's written without the wrapper here.
-        match unsafe { libc::write(fd, rest.as_ptr().cast(), rest.len()) } {
+        match unsafe { ::libc::write(fd, rest.as_ptr().cast(), rest.len()) } {
             -1 => return WriteError::get_err(),
             // This means that nothing was written. I don't really know what this means, sorry. the manual says that it's unspecified
             // (at least in terms of writing to a pipe, which this function was written for)
@@ -151,7 +156,7 @@ pub unsafe fn write_all(fd: c_int, buf: &[u8]) -> WriteResult<usize> {
 
 #[inline]
 pub unsafe fn read(fd: c_int, buf: &mut [u8]) -> ReadResult<usize> {
-    let read_count = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    let read_count = unsafe { ::libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
     if read_count == -1 {
         return ReadError::get_err();
     }
@@ -164,7 +169,7 @@ pub unsafe fn read_exact(fd: c_int, buf: &mut [u8]) -> ReadResult<usize> {
     while count < buf.len() {
         let end = buf.len();
         let rest = &mut buf[count..end];
-        match unsafe { libc::read(fd, rest.as_mut_ptr().cast(), rest.len()) } {
+        match unsafe { ::libc::read(fd, rest.as_mut_ptr().cast(), rest.len()) } {
             -1 => return ReadError::get_err(),
              0 => break,
              len => count += len as usize,
@@ -185,8 +190,8 @@ pub enum Fork<P = (), C = P> {
 
 #[inline]
 pub unsafe fn fork() -> ForkResult<Fork<pid_t>> {
-    let parent_pid: pid_t = unsafe { libc::getpid() };
-    let fork_result = unsafe { libc::fork() };
+    let parent_pid: pid_t = unsafe { ::libc::getpid() };
+    let fork_result = unsafe { ::libc::fork() };
     match fork_result {
         // There was an error, obviously.
         -1 => return ForkError::get_err(),
@@ -216,7 +221,7 @@ impl WaitStatus {
 #[inline]
 pub unsafe fn waitpid(pid: pid_t) -> WaitResult<(pid_t, WaitStatus)> {
     let mut status = WaitStatus { status: 0 };
-    let wait_result = unsafe { libc::waitpid(pid, status.as_mut_ptr(), 0) };
+    let wait_result = unsafe { ::libc::waitpid(pid, status.as_mut_ptr(), 0) };
     if wait_result == -1 {
         return WaitError::get_err();
     }
@@ -226,7 +231,7 @@ pub unsafe fn waitpid(pid: pid_t) -> WaitResult<(pid_t, WaitStatus)> {
 /// Get file status flags. (`libc::fcntl(fd, libc::F_GETFL)`)
 #[inline]
 pub unsafe fn fd_status(fd: c_int) -> FdResult<c_int> {
-    let result = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    let result = unsafe { ::libc::fcntl(fd, ::libc::F_GETFL) };
     if result == -1 {
         return FdError::get_err();
     }
@@ -236,7 +241,7 @@ pub unsafe fn fd_status(fd: c_int) -> FdResult<c_int> {
 /// Get the file descriptor flags. (`libc::fcntl(fd, libc::F_GETFD)`)
 #[inline]
 pub unsafe fn fd_flags(fd: c_int) -> FdResult<c_int> {
-    let result = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    let result = unsafe { ::libc::fcntl(fd, ::libc::F_GETFD) };
     if result == -1 {
         return FdError::get_err();
     }
@@ -255,7 +260,7 @@ macro_rules! poll_events {
         $(,)?
     ) => {
         $(
-            pub const $event: Self = Self(libc::$event);
+            pub const $event: Self = Self(::libc::$event);
         )*
     };
 }
@@ -360,7 +365,7 @@ impl PollFd {
 /// Note: A `timeout_ms` of `0` means return instantly, even if nothing is ready. `-1` means wait forever.
 #[inline]
 pub unsafe fn poll(fds: &mut [PollFd], timeout_ms: c_int) -> PollResult<usize>{
-    let poll_result = unsafe { libc::poll(fds.as_mut_ptr().cast(), fds.len() as u64, timeout_ms) };
+    let poll_result = unsafe { ::libc::poll(fds.as_mut_ptr().cast(), fds.len() as u64, timeout_ms) };
     if poll_result == -1 {
         return PollError::get_err();
     }

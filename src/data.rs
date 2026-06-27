@@ -1,3 +1,17 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright © 2026-present Ada F. <https://github.com/ErisianArchitect>
+// 
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// 
+//     http://www.apache.org/licenses/LICENSE-2.0
+// 
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 use ::core::{
     ptr::NonNull,
@@ -9,15 +23,13 @@ use std::{
     },
 };
 
-fn grow_capacity(current_capacity: usize, target_capacity: usize) -> usize {
+/// Align the target capacity to the growth factor.
+fn grow_capacity(target_capacity: usize) -> usize {
     // Grow to next power of 2 until 4096, then grow by 4096.
-    if current_capacity >= target_capacity {
-        return current_capacity;
-    }
     if target_capacity >= 4096 {
-        (target_capacity + 1).next_multiple_of(4096)
+        target_capacity.next_multiple_of(4096)
     } else {
-        (target_capacity.max(63usize) + 1).next_power_of_two()
+        target_capacity.max(64usize).next_power_of_two()
     }
 }
 
@@ -104,7 +116,7 @@ impl DataBuffer {
         if self.capacity >= capacity {
             return;
         }
-        let grown_capacity = grow_capacity(self.capacity, capacity);
+        let grown_capacity = grow_capacity(capacity);
         if self.capacity == 0 {
             let layout = Layout::array::<u8>(grown_capacity).unwrap();
             let new_ptr = unsafe { alloc::alloc(layout) };
@@ -129,8 +141,8 @@ impl DataBuffer {
         self.len = 0;
     }
 
-    // This likely won't be necessary, because the plan is for the
-    // data buffer to live for the lifetime of the supervisor.
+    /// Deallocate the memory owned by the data buffer. This will leave
+    /// the data buffer in a valid state with a capacity and length of 0.
     #[inline]
     pub(crate) fn dealloc(&mut self) {
         let layout = self.layout();

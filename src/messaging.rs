@@ -69,6 +69,7 @@ match fork() {
 
 //=types
 
+
 /// A message enum that is used to communicate with a supervisor process.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -87,11 +88,11 @@ pub enum Msg {
     /// readers. It will read data from the data reader until it receives
     /// another Data message from the message reader. The second `Data`
     /// message signifies that the data is finished sending.
-    Data = 0x03,
+    BeginData = 0x03,
     ResetData = 0x04,
     FreeData = 0x05,
-    Value(u8),
     // TODO: Update MAX_KNOWN and from_u8() whenever new variants are added.
+    Value(u8),
 }
 
 pub struct MsgReader {
@@ -112,12 +113,13 @@ impl Msg {
     const RESET: u8 = 0x04;
     const FREE: u8 = 0x05;
     pub const MAX_KNOWN: u8 = 0x05;
+    const CUSTOM_START: u8 = Self::MAX_KNOWN + 1;
     pub const fn from_u8(value: u8) -> Self {
         const ALL: [Msg; 6] = [
             Msg::Yield,
             Msg::Restart,
             Msg::Cancel,
-            Msg::Data,
+            Msg::BeginData,
             Msg::ResetData,
             Msg::FreeData,
         ];
@@ -136,10 +138,10 @@ impl Msg {
             Msg::Yield => Self::YIELD,
             Msg::Restart => Self::RESTART,
             Msg::Cancel => Self::CANCEL,
-            Msg::Data => Self::DATA,
+            Msg::BeginData => Self::DATA,
             Msg::ResetData => Self::RESET,
             Msg::FreeData => Self::FREE,
-            Msg::Value(unk) => unk,
+            Msg::Value(unk) => unk as u8,
         }
     }
 }
